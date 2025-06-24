@@ -1,0 +1,16 @@
+{
+    "mysql": {
+        "host": "localhost",
+        "port": 3306,
+        "user": "votre_utilisateur",
+        "password": "votre_mot_de_passe",
+        "database": "votre_base_de_donnees"
+    },
+    "csv": {
+        "folder_path": "./csv_files",
+        "table_name": "imported_data",
+        "encoding": "utf-8",
+        "delimiter": ",",
+        "create_table_if_not_exists": true
+    }
+}
