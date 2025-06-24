@@ -1,16 +1,27 @@
 {
-    "mysql": {
+    "database": {
         "host": "localhost",
-        "port": 3306,
-        "user": "votre_utilisateur",
+        "user": "root",
         "password": "votre_mot_de_passe",
-        "database": "votre_base_de_donnees"
+        "database": "votre_base_de_donnees",
+        "charset": "utf8mb4"
     },
     "csv": {
-        "folder_path": "./csv_files",
-        "table_name": "imported_data",
         "encoding": "utf-8",
-        "delimiter": ",",
-        "create_table_if_not_exists": true
+        "separator": ",",
+        "default_table_name": "ma_table_csv"
+    },
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(levelname)s - %(message)s",
+        "file": "csv_mysql.log"
+    },
+    "monitoring": {
+        "check_interval": 60,
+        "auto_create_table": true
+    },
+    "data_types": {
+        "varchar_length": 255,
+        "decimal_precision": "10,2"
     }
 }
