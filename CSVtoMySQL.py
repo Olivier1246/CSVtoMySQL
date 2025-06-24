@@ -27,6 +27,67 @@ class CSVtoMySQL:
         )
         self.logger = logging.getLogger(__name__)
     
+    def find_latest_csv(self, directory=None, pattern=None):
+        """
+        Trouve le fichier CSV le plus récent dans le dossier spécifié
+        """
+        import glob
+        
+        if directory is None:
+            directory = self.config.get('csv', {}).get('scan_directory', './csv_files')
+        
+        if pattern is None:
+            pattern = self.config.get('csv', {}).get('file_pattern', '*.csv')
+        
+        # Créer le dossier si il n'existe pas
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+            self.logger.info(f"Dossier créé: {directory}")
+            return None
+        
+        # Rechercher les fichiers CSV
+        search_pattern = os.path.join(directory, pattern)
+        csv_files = glob.glob(search_pattern)
+        
+        if not csv_files:
+            self.logger.warning(f"Aucun fichier CSV trouvé dans {directory} avec le pattern {pattern}")
+            return None
+        
+        # Trouver le plus récent
+        latest_file = max(csv_files, key=os.path.getmtime)
+        modification_time = datetime.fromtimestamp(os.path.getmtime(latest_file))
+        
+        self.logger.info(f"Fichier CSV le plus récent trouvé: {latest_file}")
+        self.logger.info(f"Date de modification: {modification_time}")
+        
+        return latest_file
+    
+    def get_csv_file_to_process(self, csv_file=None):
+        """
+        Détermine quel fichier CSV traiter
+        """
+        csv_config = self.config.get('csv', {})
+        
+        # Si un fichier est spécifié explicitement
+        if csv_file is not None:
+            if os.path.exists(csv_file):
+                return csv_file
+            else:
+                self.logger.error(f"Fichier spécifié non trouvé: {csv_file}")
+                return None
+        
+        # Si la recherche automatique est activée
+        if csv_config.get('auto_find_latest', True):
+            return self.find_latest_csv()
+        
+        # Sinon, utiliser le fichier par défaut (pour compatibilité)
+        default_file = 'data.csv'
+        if os.path.exists(default_file):
+            return default_file
+        
+        self.logger.error("Aucun fichier CSV à traiter")
+        return None
+    
     def load_config(self, config_file):
         """
         Charge la configuration depuis un fichier JSON
@@ -56,7 +117,10 @@ class CSVtoMySQL:
             "csv": {
                 "encoding": "utf-8",
                 "separator": ",",
-                "default_table_name": "csv_data"
+                "default_table_name": "csv_data",
+                "scan_directory": "./csv_files",
+                "auto_find_latest": True,
+                "file_pattern": "*.csv"
             },
             "logging": {
                 "level": "INFO",
@@ -184,25 +248,30 @@ class CSVtoMySQL:
             else:
                 raise
     
-    def import_csv_initial(self, csv_file, table_name=None):
+    def import_csv_initial(self, csv_file=None, table_name=None):
         """
         Import initial complet du CSV vers MySQL
         """
         try:
+            # Déterminer le fichier CSV à traiter
+            csv_file_to_process = self.get_csv_file_to_process(csv_file)
+            if csv_file_to_process is None:
+                raise FileNotFoundError("Aucun fichier CSV disponible pour l'import")
+            
             # Utiliser le nom de table par défaut si non spécifié
             if table_name is None:
                 table_name = self.config.get('csv', {}).get('default_table_name', 'csv_data')
             
             # Créer la table si configuré pour le faire
             if self.config.get('monitoring', {}).get('auto_create_table', True):
-                self.create_table_from_csv(csv_file, table_name)
+                self.create_table_from_csv(csv_file_to_process, table_name)
             
             # Configuration CSV
             csv_config = self.config.get('csv', {})
             
             # Lire le CSV
             df = pd.read_csv(
-                csv_file,
+                csv_file_to_process,
                 encoding=csv_config.get('encoding', 'utf-8'),
                 sep=csv_config.get('separator', ',')
             )
@@ -231,18 +300,23 @@ class CSVtoMySQL:
                     self.logger.warning(f"Erreur lors de l'insertion de la ligne {index}: {err}")
             
             self.connection.commit()
-            self.logger.info(f"Import initial terminé: {rows_inserted} lignes insérées dans '{table_name}'")
+            self.logger.info(f"Import initial terminé: {rows_inserted} lignes insérées dans '{table_name}' depuis '{csv_file_to_process}'")
             return rows_inserted
             
         except Exception as e:
             self.logger.error(f"Erreur lors de l'import initial: {e}")
             raise
     
-    def append_new_rows(self, csv_file, table_name=None):
+    def append_new_rows(self, csv_file=None, table_name=None):
         """
         Ajoute uniquement les nouvelles lignes du CSV qui ne sont pas déjà dans la base
         """
         try:
+            # Déterminer le fichier CSV à traiter
+            csv_file_to_process = self.get_csv_file_to_process(csv_file)
+            if csv_file_to_process is None:
+                raise FileNotFoundError("Aucun fichier CSV disponible pour l'append")
+            
             # Utiliser le nom de table par défaut si non spécifié
             if table_name is None:
                 table_name = self.config.get('csv', {}).get('default_table_name', 'csv_data')
@@ -251,7 +325,7 @@ class CSVtoMySQL:
             self.cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
             if not self.cursor.fetchone():
                 self.logger.info(f"Table '{table_name}' n'existe pas, import initial en cours...")
-                return self.import_csv_initial(csv_file, table_name)
+                return self.import_csv_initial(csv_file_to_process, table_name)
             
             # Récupérer les hashes existants
             existing_hashes = self.get_existing_hashes(table_name)
@@ -262,7 +336,7 @@ class CSVtoMySQL:
             
             # Lire le CSV
             df = pd.read_csv(
-                csv_file,
+                csv_file_to_process,
                 encoding=csv_config.get('encoding', 'utf-8'),
                 sep=csv_config.get('separator', ',')
             )
@@ -299,7 +373,7 @@ class CSVtoMySQL:
                     self.logger.warning(f"Erreur lors de l'insertion d'une nouvelle ligne: {err}")
             
             self.connection.commit()
-            self.logger.info(f"Append terminé: {rows_inserted} nouvelles lignes ajoutées")
+            self.logger.info(f"Append terminé: {rows_inserted} nouvelles lignes ajoutées depuis '{csv_file_to_process}'")
             return rows_inserted
             
         except Exception as e:
@@ -331,7 +405,7 @@ class CSVtoMySQL:
             self.logger.error(f"Erreur lors de la récupération des stats: {e}")
             return None
     
-    def monitor_csv_and_sync(self, csv_file, table_name=None):
+    def monitor_csv_and_sync(self, csv_file=None, table_name=None):
         """
         Surveille le fichier CSV et synchronise automatiquement
         """
@@ -341,24 +415,38 @@ class CSVtoMySQL:
             table_name = self.config.get('csv', {}).get('default_table_name', 'csv_data')
         
         check_interval = self.config.get('monitoring', {}).get('check_interval', 60)
+        csv_config = self.config.get('csv', {})
+        scan_directory = csv_config.get('scan_directory', './csv_files')
         
+        last_processed_file = None
         last_modified = 0
-        self.logger.info(f"Surveillance du fichier {csv_file} démarrée (intervalle: {check_interval}s)")
+        
+        self.logger.info(f"Surveillance du dossier {scan_directory} démarrée (intervalle: {check_interval}s)")
         
         try:
             while True:
-                if os.path.exists(csv_file):
-                    current_modified = os.path.getmtime(csv_file)
+                # Trouver le fichier CSV le plus récent
+                if csv_file is None:
+                    current_file = self.find_latest_csv()
+                else:
+                    current_file = csv_file if os.path.exists(csv_file) else None
+                
+                if current_file:
+                    current_modified = os.path.getmtime(current_file)
                     
-                    if current_modified > last_modified:
-                        self.logger.info("Modification détectée dans le fichier CSV")
-                        new_rows = self.append_new_rows(csv_file, table_name)
+                    # Vérifier si c'est un nouveau fichier ou si le fichier a été modifié
+                    if (current_file != last_processed_file or current_modified > last_modified):
+                        self.logger.info(f"Changement détecté: {current_file}")
+                        new_rows = self.append_new_rows(current_file, table_name)
                         
                         if new_rows > 0:
                             stats = self.get_table_stats(table_name)
                             self.logger.info(f"Synchronisation terminée. Total: {stats['total_rows']} lignes")
                         
+                        last_processed_file = current_file
                         last_modified = current_modified
+                else:
+                    self.logger.debug("Aucun fichier CSV trouvé")
                 
                 time.sleep(check_interval)
                 
@@ -376,12 +464,11 @@ if __name__ == "__main__":
         
         if csv_mysql.connect():
             try:
-                # Fichier CSV (peut être configuré dans le JSON aussi)
-                csv_file = 'data.csv'
+                # Plus besoin de spécifier le fichier CSV, il sera trouvé automatiquement
                 
                 # Import initial ou ajout de nouvelles lignes
                 print("=== Import/Append des données CSV ===")
-                new_rows = csv_mysql.append_new_rows(csv_file)
+                new_rows = csv_mysql.append_new_rows()  # Plus besoin de spécifier le fichier
                 print(f"Nombre de nouvelles lignes ajoutées: {new_rows}")
                 
                 # Afficher les statistiques
@@ -392,7 +479,7 @@ if __name__ == "__main__":
                     print(f"Dernière insertion: {stats['last_insert']}")
                 
                 # Optionnel: surveillance continue
-                # csv_mysql.monitor_csv_and_sync(csv_file)
+                # csv_mysql.monitor_csv_and_sync()
                 
             finally:
                 csv_mysql.disconnect()

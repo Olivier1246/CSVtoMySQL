@@ -9,7 +9,10 @@
     "csv": {
         "encoding": "utf-8",
         "separator": ",",
-        "default_table_name": "ma_table_csv"
+        "default_table_name": "ma_table_csv",
+        "scan_directory": "./csv_files",
+        "auto_find_latest": true,
+        "file_pattern": "*.csv"
     },
     "logging": {
         "level": "INFO",
